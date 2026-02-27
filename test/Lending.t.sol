@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-import {Test, console} from "forge-std/Test.sol";
+import {Test} from "forge-std/Test.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 import {CornToken} from "../src/CornToken.sol";
 import {CornDex} from "../src/CornDex.sol";
 import {Lending} from "../src/Lending.sol";
@@ -10,7 +11,6 @@ import {MovePrice} from "../src/MovePrice.sol";
 import {FlashLoanLiquidator} from "../src/FlashLoanLiquidator.sol";
 import {
     InsufficientCollateral,
-    InsufficientDebt,
     HealthFactorOk,
     GracePeriodActive,
     NotAtRisk,
@@ -52,6 +52,7 @@ contract LendingTest is Test {
     address homeowner = makeAddr("homeowner");
     address attacker = makeAddr("attacker");
     address nobody = makeAddr("nobody");
+    address keeper = makeAddr("keeper");
 
     uint256 constant INITIAL_ETH_PRICE = 2000e18; // 1 ETH = 2000 CORN
     uint256 constant COLLATERAL_AMOUNT = 10 ether;
@@ -62,7 +63,7 @@ contract LendingTest is Test {
 
         cornToken = new CornToken(owner);
         cornDex = new CornDex(INITIAL_ETH_PRICE, owner);
-        lending = new Lending(address(cornToken), address(cornDex));
+        lending = new Lending(address(cornToken), address(cornDex), owner);
         movePrice = new MovePrice(address(cornDex), owner);
         liquidator = new FlashLoanLiquidator(address(lending), address(cornToken));
 
@@ -82,7 +83,7 @@ contract LendingTest is Test {
         vm.prank(homeowner);
         lending.depositCollateral{value: COLLATERAL_AMOUNT}();
 
-        (uint256 ethCollateral,,) = lending.accounts(homeowner);
+        (uint256 ethCollateral,,,) = lending.accounts(homeowner);
         assertEq(ethCollateral, COLLATERAL_AMOUNT);
     }
 
@@ -92,7 +93,7 @@ contract LendingTest is Test {
         lending.borrowCorn(BORROW_AMOUNT);
         vm.stopPrank();
 
-        (, uint256 cornDebt,) = lending.accounts(homeowner);
+        (, uint256 cornDebt,,) = lending.accounts(homeowner);
         assertEq(cornDebt, BORROW_AMOUNT);
         assertEq(cornToken.balanceOf(homeowner), BORROW_AMOUNT);
     }
@@ -148,7 +149,7 @@ contract LendingTest is Test {
         vm.prank(attacker);
         liquidator.executeLiquidation(homeowner, BORROW_AMOUNT);
 
-        (, uint256 debtAfter,) = lending.accounts(homeowner);
+        (, uint256 debtAfter,,) = lending.accounts(homeowner);
         assertEq(debtAfter, 0, "Debt should be fully repaid after liquidation");
     }
 
@@ -199,6 +200,214 @@ contract LendingTest is Test {
 
         (atRisk,,) = lending.getRiskStatus(homeowner);
         assertFalse(atRisk, "Should not be at risk after full repayment");
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  PAUSE MECHANISM
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    function test_PauseBlocksDeposit() public {
+        vm.prank(owner);
+        lending.pause();
+
+        vm.prank(homeowner);
+        vm.expectRevert(abi.encodeWithSelector(Pausable.EnforcedPause.selector));
+        lending.depositCollateral{value: 1 ether}();
+    }
+
+    function test_PauseBlocksBorrow() public {
+        vm.prank(homeowner);
+        lending.depositCollateral{value: COLLATERAL_AMOUNT}();
+
+        vm.prank(owner);
+        lending.pause();
+
+        vm.prank(homeowner);
+        vm.expectRevert(abi.encodeWithSelector(Pausable.EnforcedPause.selector));
+        lending.borrowCorn(1000e18);
+    }
+
+    function test_PauseBlocksLiquidate() public {
+        vm.startPrank(homeowner);
+        lending.depositCollateral{value: COLLATERAL_AMOUNT}();
+        lending.borrowCorn(BORROW_AMOUNT);
+        vm.stopPrank();
+
+        vm.prank(owner);
+        movePrice.crashPrice(60);
+        lending.flagAtRisk(homeowner);
+        vm.warp(block.timestamp + 25 hours);
+
+        vm.prank(owner);
+        lending.pause();
+
+        vm.prank(address(lending));
+        cornToken.mint(attacker, BORROW_AMOUNT);
+
+        vm.startPrank(attacker);
+        cornToken.approve(address(lending), BORROW_AMOUNT);
+        vm.expectRevert(abi.encodeWithSelector(Pausable.EnforcedPause.selector));
+        lending.liquidate(homeowner, BORROW_AMOUNT);
+        vm.stopPrank();
+    }
+
+    function test_WithdrawAndRepayStillWorkWhenPaused() public {
+        vm.startPrank(homeowner);
+        lending.depositCollateral{value: COLLATERAL_AMOUNT}();
+        lending.borrowCorn(BORROW_AMOUNT);
+        vm.stopPrank();
+
+        vm.prank(owner);
+        lending.pause();
+
+        // Users can always repay and withdraw when paused
+        vm.startPrank(homeowner);
+        cornToken.approve(address(lending), BORROW_AMOUNT);
+        lending.repayCorn(BORROW_AMOUNT);
+        lending.withdrawCollateral(COLLATERAL_AMOUNT);
+        vm.stopPrank();
+    }
+
+    function test_UnpauseRestoresNormalOperation() public {
+        vm.prank(owner);
+        lending.pause();
+
+        vm.prank(owner);
+        lending.unpause();
+
+        vm.prank(homeowner);
+        lending.depositCollateral{value: 1 ether}();
+    }
+
+    function test_RevertWhen_Pause_NotOwner() public {
+        vm.prank(nobody);
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, nobody));
+        lending.pause();
+    }
+
+    function test_RevertWhen_Unpause_NotOwner() public {
+        vm.prank(owner);
+        lending.pause();
+
+        vm.prank(nobody);
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, nobody));
+        lending.unpause();
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  FLAGGER BONUS
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    function test_FlaggerReceivesBonusAtLiquidation() public {
+        vm.startPrank(homeowner);
+        lending.depositCollateral{value: COLLATERAL_AMOUNT}();
+        lending.borrowCorn(BORROW_AMOUNT);
+        vm.stopPrank();
+
+        // 10% crash: price = 1800 CORN/ETH. baseEth = 15000/1800 ≈ 8.33 ETH,
+        // collateralToSeize ≈ 8.75 ETH (< 10 ETH collateral), so position is solvent
+        // and collateralToSeize > baseEth → flagger bonus is triggered.
+        vm.prank(owner);
+        movePrice.crashPrice(10);
+
+        vm.prank(keeper);
+        lending.flagAtRisk(homeowner);
+
+        (,,, address flaggedBy) = lending.accounts(homeowner);
+        assertEq(flaggedBy, keeper, "flaggedBy should be keeper");
+
+        vm.warp(block.timestamp + 25 hours);
+
+        vm.prank(address(lending));
+        cornToken.mint(attacker, BORROW_AMOUNT);
+
+        uint256 keeperBalanceBefore = keeper.balance;
+        uint256 attackerBalanceBefore = attacker.balance;
+
+        vm.startPrank(attacker);
+        cornToken.approve(address(lending), BORROW_AMOUNT);
+        lending.liquidate(homeowner, BORROW_AMOUNT);
+        vm.stopPrank();
+
+        assertGt(keeper.balance, keeperBalanceBefore, "keeper should receive flagger bonus");
+        assertGt(attacker.balance, attackerBalanceBefore, "attacker should receive liquidator collateral");
+    }
+
+    function test_LiquidatorGetsBothBonusesWhenSelfFlag() public {
+        vm.startPrank(homeowner);
+        lending.depositCollateral{value: COLLATERAL_AMOUNT}();
+        lending.borrowCorn(BORROW_AMOUNT);
+        vm.stopPrank();
+
+        vm.prank(owner);
+        movePrice.crashPrice(10);
+
+        vm.prank(attacker);
+        lending.flagAtRisk(homeowner);
+
+        vm.warp(block.timestamp + 25 hours);
+
+        vm.prank(address(lending));
+        cornToken.mint(attacker, BORROW_AMOUNT);
+
+        uint256 attackerBalanceBefore = attacker.balance;
+
+        vm.startPrank(attacker);
+        cornToken.approve(address(lending), BORROW_AMOUNT);
+        lending.liquidate(homeowner, BORROW_AMOUNT);
+        vm.stopPrank();
+
+        assertGt(attacker.balance, attackerBalanceBefore, "attacker should receive full proceeds");
+    }
+
+    function test_NoBonusOnInsolventPosition() public {
+        vm.startPrank(homeowner);
+        lending.depositCollateral{value: COLLATERAL_AMOUNT}();
+        lending.borrowCorn(BORROW_AMOUNT);
+        vm.stopPrank();
+
+        // Deep crash — position insolvent, seized ETH < base debt-in-ETH
+        vm.prank(owner);
+        movePrice.crashPrice(60);
+
+        vm.prank(keeper);
+        lending.flagAtRisk(homeowner);
+
+        vm.warp(block.timestamp + 25 hours);
+
+        vm.prank(address(lending));
+        cornToken.mint(attacker, BORROW_AMOUNT);
+
+        uint256 keeperBalanceBefore = keeper.balance;
+
+        vm.startPrank(attacker);
+        cornToken.approve(address(lending), BORROW_AMOUNT);
+        lending.liquidate(homeowner, BORROW_AMOUNT);
+        vm.stopPrank();
+
+        assertEq(keeper.balance, keeperBalanceBefore, "keeper should not receive bonus on insolvent position");
+    }
+
+    function test_FlaggedByClearedAfterRiskReset() public {
+        vm.startPrank(homeowner);
+        lending.depositCollateral{value: COLLATERAL_AMOUNT}();
+        lending.borrowCorn(BORROW_AMOUNT);
+        vm.stopPrank();
+
+        vm.prank(owner);
+        movePrice.crashPrice(60);
+
+        vm.prank(keeper);
+        lending.flagAtRisk(homeowner);
+
+        (,,, address flaggedBy) = lending.accounts(homeowner);
+        assertEq(flaggedBy, keeper);
+
+        vm.prank(homeowner);
+        lending.depositCollateral{value: 20 ether}();
+
+        (,,, address flaggedByAfter) = lending.accounts(homeowner);
+        assertEq(flaggedByAfter, address(0), "flaggedBy should be cleared after recovery");
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -339,7 +548,7 @@ contract LendingTest is Test {
         vm.prank(owner);
         movePrice.crashPrice(60);
 
-        // User is undercollateralized but NOT flagged yet
+        // User is undercollateralized but NOT flagged yet — must revert NotAtRisk
         vm.prank(address(lending));
         cornToken.mint(attacker, BORROW_AMOUNT);
 

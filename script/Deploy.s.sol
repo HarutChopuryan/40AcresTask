@@ -12,7 +12,7 @@ import {FlashLoanLiquidator} from "../src/FlashLoanLiquidator.sol";
 ///         Usage: forge script script/Deploy.s.sol --rpc-url http://127.0.0.1:8545 --broadcast
 contract DeployScript is Script {
     function run() public {
-        uint256 deployerPrivateKey = vm.envOr("PRIVATE_KEY", uint256(0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80));
+        uint256 deployerPrivateKey = vm.envUint("PRIVATE_KEY");
         address deployer = vm.addr(deployerPrivateKey);
 
         vm.startBroadcast(deployerPrivateKey);
@@ -25,7 +25,7 @@ contract DeployScript is Script {
         CornDex cornDex = new CornDex(initialEthPrice, deployer);
         console.log("CornDex:", address(cornDex));
 
-        Lending lending = new Lending(address(cornToken), address(cornDex));
+        Lending lending = new Lending(address(cornToken), address(cornDex), deployer);
         console.log("Lending:", address(lending));
 
         MovePrice movePrice = new MovePrice(address(cornDex), deployer);

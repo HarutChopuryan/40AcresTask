@@ -10,6 +10,9 @@ library PriceCalculator {
     /// @param ethAmount Amount of ETH in wei (18 decimals)
     /// @param ethPriceInCorn Price of 1 ETH in CORN (18 decimals)
     /// @return cornValue The equivalent CORN value (18 decimals)
+    /// @dev Integer division truncates. Dust-level ETH amounts (single-wei positions)
+    ///      may round down to zero, causing calculateHealthFactor to return
+    ///      type(uint256).max for those positions. Economically negligible in practice.
     function ethToCornValue(uint256 ethAmount, uint256 ethPriceInCorn) internal pure returns (uint256 cornValue) {
         cornValue = (ethAmount * ethPriceInCorn) / PRECISION;
     }
@@ -37,17 +40,5 @@ library PriceCalculator {
         healthFactor = (adjustedCollateral * PRECISION) / cornDebt;
     }
 
-    /// @notice Calculate how much ETH collateral to seize for a given CORN debt repayment.
-    /// @param debtToRepay CORN amount being repaid (18 decimals)
-    /// @param ethPriceInCorn Price of 1 ETH in CORN (18 decimals)
-    /// @param liquidationBonus Bonus percentage for the liquidator (e.g. 5)
-    /// @return collateral ETH amount to seize in wei (18 decimals)
-    function calculateCollateralToSeize(
-        uint256 debtToRepay,
-        uint256 ethPriceInCorn,
-        uint256 liquidationBonus
-    ) internal pure returns (uint256 collateral) {
-        collateral = cornToEthValue(debtToRepay, ethPriceInCorn);
-        collateral = (collateral * (100 + liquidationBonus)) / 100;
-    }
+
 }

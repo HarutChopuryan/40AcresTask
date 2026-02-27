@@ -25,6 +25,7 @@ export const LendingABI = [
       { name: "ethCollateral", type: "uint256" },
       { name: "cornDebt", type: "uint256" },
       { name: "atRiskSince", type: "uint256" },
+      { name: "flaggedBy", type: "address" },
     ],
     stateMutability: "view",
   },

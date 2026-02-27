@@ -25,7 +25,7 @@ contract CornDex is Ownable {
     }
 
     /// @notice Returns how much CORN a given amount of ETH is worth.
-    function ethToCorValue(uint256 ethAmount) external view returns (uint256) {
+    function ethToCornValue(uint256 ethAmount) external view returns (uint256) {
         return PriceCalculator.ethToCornValue(ethAmount, ethPriceInCorn);
     }
 }
