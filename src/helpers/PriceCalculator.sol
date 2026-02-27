@@ -30,15 +30,13 @@ library PriceCalculator {
     /// @param cornDebt Outstanding debt in CORN (18 decimals)
     /// @param liquidationThreshold Percentage of collateral that counts (e.g. 80)
     /// @return healthFactor 18-decimal ratio; >= 1e18 means healthy
-    function calculateHealthFactor(
-        uint256 collateralValueInCorn,
-        uint256 cornDebt,
-        uint256 liquidationThreshold
-    ) internal pure returns (uint256 healthFactor) {
+    function calculateHealthFactor(uint256 collateralValueInCorn, uint256 cornDebt, uint256 liquidationThreshold)
+        internal
+        pure
+        returns (uint256 healthFactor)
+    {
         if (cornDebt == 0) return type(uint256).max;
         uint256 adjustedCollateral = (collateralValueInCorn * liquidationThreshold) / 100;
         healthFactor = (adjustedCollateral * PRECISION) / cornDebt;
     }
-
-
 }

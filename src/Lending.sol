@@ -33,11 +33,11 @@ import {
 ///      borrowCorn, repayCorn, and price fluctuations from CornDex.
 contract Lending is ReentrancyGuard, Ownable, Pausable {
     // ─── Constants ────────────────────────────────────────────────────────────────
-    uint256 public constant MIN_HEALTH_FACTOR     = 1e18; // 1.0 in 18 decimals
-    uint256 public constant GRACE_PERIOD          = 24 hours;
-    uint256 public constant LIQUIDATION_THRESHOLD = 80;   // 80% LTV
-    uint256 public constant LIQUIDATION_BONUS     = 5;    // 5% total bonus on seized collateral (above debt value)
-    uint256 public constant FLAGGER_BONUS         = 1;    // 1% of debt-equiv ETH paid to the flagAtRisk caller
+    uint256 public constant MIN_HEALTH_FACTOR = 1e18; // 1.0 in 18 decimals
+    uint256 public constant GRACE_PERIOD = 24 hours;
+    uint256 public constant LIQUIDATION_THRESHOLD = 80; // 80% LTV
+    uint256 public constant LIQUIDATION_BONUS = 5; // 5% total bonus on seized collateral (above debt value)
+    uint256 public constant FLAGGER_BONUS = 1; // 1% of debt-equiv ETH paid to the flagAtRisk caller
 
     // ─── State ────────────────────────────────────────────────────────────────────
     CornToken public immutable cornToken;
@@ -45,9 +45,9 @@ contract Lending is ReentrancyGuard, Ownable, Pausable {
 
     struct UserAccount {
         uint256 ethCollateral; // ETH deposited (in wei)
-        uint256 cornDebt;      // CORN borrowed (18 decimals)
-        uint256 atRiskSince;   // Timestamp when health factor first dropped below 1.0 (0 = not at risk)
-        address flaggedBy;     // Address that called flagAtRisk — earns FLAGGER_BONUS at liquidation
+        uint256 cornDebt; // CORN borrowed (18 decimals)
+        uint256 atRiskSince; // Timestamp when health factor first dropped below 1.0 (0 = not at risk)
+        address flaggedBy; // Address that called flagAtRisk — earns FLAGGER_BONUS at liquidation
     }
 
     mapping(address => UserAccount) public accounts;
@@ -200,8 +200,7 @@ contract Lending is ReentrancyGuard, Ownable, Pausable {
         // Flagger earns FLAGGER_BONUS% of baseEth only when the position is solvent
         // (seized collateral still exceeds the raw debt-equivalent ETH)
         address flagger = account.flaggedBy;
-        uint256 flagBonus =
-            (flagger != address(0) && collateralToSeize > baseEth) ? (baseEth * FLAGGER_BONUS) / 100 : 0;
+        uint256 flagBonus = (flagger != address(0) && collateralToSeize > baseEth) ? (baseEth * FLAGGER_BONUS) / 100 : 0;
         uint256 liquidatorCollateral = collateralToSeize - flagBonus;
 
         // ── Effects ───────────────────────────────────────────────────────────────
